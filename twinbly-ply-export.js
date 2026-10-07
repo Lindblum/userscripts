@@ -285,7 +285,7 @@ Other notes:
 		let imgUrl  = document.querySelector('meta[property="og:image"]').content;
 		let sceneId = new URL(imgUrl).pathname.split('/').pop();
 		let settings = await fetch(`/api/splats/public/${sceneId}/settings`).then(r => r.json());
-		let toMeters = settings.settings.sceneScale.metersPerUnit;
+		let toMeters = settings?.settings?.sceneScale?.metersPerUnit; //Not every scene has a scale set
 		let docName = window.location.pathname.split('/').pop();
 
 		//Radius (scene units; blank or 0 = everything)
@@ -331,12 +331,13 @@ Other notes:
 		}
 		const pillBtn = 'border:0;border-radius:9999px;padding:5px 12px;font:inherit;cursor:pointer;color:inherit;transition:background 150ms ease-out';
 		panel.innerHTML = `
-			<form data-form style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;margin:0">
+			<form data-form style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;flex:1;min-width:0;margin:0">
 				<label for="tm-ply-radius" style="white-space:nowrap">Radius</label>
 				<input id="tm-ply-radius" data-radius type="number" min="0" step="any" placeholder="all"
 					style="width:56px;min-width:0;padding:4px 8px;border-radius:9999px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.08);color:inherit;font:inherit;outline:none">
 				<span data-meters style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:rgba(255,255,255,0.55)"></span>
-				<button type="submit" data-hover style="${pillBtn};background:rgba(255,255,255,0.15)">Export</button>
+				<div style="flex-basis:100%;height:0"></div>
+				<button type="submit" data-hover style="${pillBtn};margin-left:auto;background:rgba(255,255,255,0.15)">Export</button>
 				<button type="button" data-cancel data-hover title="Cancel" aria-label="Cancel" style="${pillBtn};padding:5px 8px;background:transparent">✕</button>
 			</form>
 			<div data-progress style="display:none;flex:1;min-width:0;align-items:center;gap:10px;padding-right:8px">
@@ -378,7 +379,7 @@ Other notes:
 			askRadius(toMeters, defaultRadius) {
 				const hint = () => {
 					let v = parseFloat(input.value);
-					meters.textContent = v > 0 ? `≈ ${+(v * toMeters).toFixed(1)} m` : 'whole scene';
+					meters.textContent = !(v > 0) ? 'Whole scene' : toMeters ? `≈ ${+(v * toMeters).toFixed(1)} m` : 'Units (scale unknown)';
 				};
 				input.value = defaultRadius;
 				hint();
