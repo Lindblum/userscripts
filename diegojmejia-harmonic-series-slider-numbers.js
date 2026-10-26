@@ -1,11 +1,10 @@
 // ==UserScript==
 // @author       Lindblum
 // @name         Harmonic Series Online Visualizer Slider Numbers
-// @namespace    https://harmonicseries.diegojmejia.com
-// @match        https://harmonicseries.diegojmejia.com
+// @namespace    https://github.com/lindblum/userscripts
 // @version      1.1
 // @description  Number fields for each .card-slider, plus a paste-a-list field for harmonic amplitudes.
-// @icon         data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==
+// @match        https://harmonicseries.diegojmejia.com
 // @grant        none
 // ==/UserScript==
 (() => {

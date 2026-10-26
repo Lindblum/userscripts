@@ -1,8 +1,8 @@
 // ==UserScript==
 // @author       Lindblum
 // @name         GitHub Alt Links
-// @namespace    https://github.com/
-// @version      1.1.1
+// @namespace    https://github.com/lindblum/userscripts
+// @version      1.2.0
 // @description  Adds an "Open in" dropdown (styled like GitHub's "Create new" menu) with links to the current page on github.dev, gitingest.com, gitdiagram.com and more
 // @match        https://github.com/*
 // @run-at       document-idle
@@ -15,6 +15,10 @@
 
   const CONTAINER_ID = 'tm-alt-domain-links';
   const MENU_ID = 'tm-alt-domain-menu';
+  const HOMEPAGE_ID = 'tm-alt-domain-homepage';
+
+  // Website links from repos' About sections, keyed by "user/repo" so they survive navigating into subpages
+  const homepages = new Map();
 
   const TARGETS = [
     { label: 'GithubPages', url: 'https://{user}.github.io/{repo}/' },
@@ -75,6 +79,32 @@
     return new URL(t.url.replace('{user}',user).replace('{repo}',repo).replace('{after}',after)).href;
   }
 
+  function repoKey() {
+    const [, user, repo] = new URL(window.location.href).pathname.split('/');
+    return `${user}/${repo}`.toLowerCase();
+  }
+
+  // The About sidebar (only on the repo root) shows the website in a SidebarAbout websiteLink span (hashed
+  // CSS-module class, so match on its stable parts), or next to a link octicon in the older layout
+  function readHomepage() {
+    let a = null;
+    const span = document.querySelector('[class*="SidebarAbout-module"][class*="websiteLink"]');
+    if (span) {
+      a = span.closest('a[href^="http"]') || span.querySelector('a[href^="http"]');
+      if (!a) {
+        const text = (span.getAttribute('title') || span.textContent).trim();
+        if (text) {
+          try { a = new URL(/^https?:\/\//i.test(text) ? text : `https://${text}`); } catch (e) { /* not a URL */ }
+        }
+      }
+    }
+    if (!a) {
+      const icon = document.querySelector('.Layout-sidebar .BorderGrid-cell svg.octicon-link');
+      a = icon && icon.parentElement.querySelector('a[href^="http"]');
+    }
+    if (a) homepages.set(repoKey(), a.href);
+  }
+
   function ensureStyle() {
     if (document.getElementById(CONTAINER_ID + '-style')) return;
     const style = document.createElement('style');
@@ -91,6 +121,24 @@
     menu.id = MENU_ID;
     menu.setAttribute('role', 'menu');
     menu.hidden = true;
+
+    const homeLi = document.createElement('li');
+    homeLi.id = HOMEPAGE_ID;
+    homeLi.setAttribute('role', 'none');
+    homeLi.hidden = true;
+    const homeA = document.createElement('a');
+    homeA.setAttribute('role', 'menuitem');
+    homeA.target = '_blank';
+    homeA.rel = 'noopener noreferrer';
+    homeA.innerHTML = ICON_LINK_EXTERNAL;
+    const homeLbl = document.createElement('span');
+    homeLbl.textContent = 'Homepage';
+    const homeHost = document.createElement('span');
+    homeHost.className = 'tm-host';
+    homeA.append(homeLbl, homeHost);
+    homeA.addEventListener('click', () => closeMenu());
+    homeLi.appendChild(homeA);
+    menu.appendChild(homeLi);
 
     TARGETS.forEach((t) => {
       const li = document.createElement('li');
@@ -129,7 +177,17 @@
     const after = pathname.split('/').slice(3).join('/');
     const menu = document.getElementById(MENU_ID);
     if (!menu) return;
-    menu.querySelectorAll('a').forEach((a) => {
+
+    const homeLi = document.getElementById(HOMEPAGE_ID);
+    const homepage = homepages.get(repoKey());
+    homeLi.hidden = !homepage;
+    if (homepage) {
+      const homeA = homeLi.querySelector('a');
+      homeA.href = homepage;
+      homeA.querySelector('.tm-host').textContent = new URL(homepage).hostname;
+    }
+
+    menu.querySelectorAll('a[data-host]').forEach((a) => {
       const t = TARGETS.find((x) => new URL(x.url.replace('{user}',user).replace('{repo}',repo).replace('{after}',after)).hostname === a.dataset.host);
       if(t)
         a.href = buildUrl(t);
@@ -139,6 +197,7 @@
   function openMenu(focusFirst) {
     const btn = document.querySelector(`#${CONTAINER_ID} .tm-btn`);
     const menu = getMenu();
+    readHomepage();
     refreshHrefs();
     menu.hidden = false;
     const r = btn.getBoundingClientRect();
@@ -146,7 +205,7 @@
     menu.style.top = `${r.bottom + 4}px`;
     menu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
     btn.setAttribute('aria-expanded', 'true');
-    if (focusFirst) menu.querySelector('a').focus();
+    if (focusFirst) menu.querySelector('li:not([hidden]) a').focus();
   }
 
   function closeMenu(returnFocus) {
@@ -165,7 +224,7 @@
   }
 
   function onMenuKey(e) {
-    const items = [...document.querySelectorAll(`#${MENU_ID} a`)];
+    const items = [...document.querySelectorAll(`#${MENU_ID} li:not([hidden]) a`)];
     const i = items.indexOf(document.activeElement);
     if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length].focus(); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length].focus(); }
@@ -200,6 +259,7 @@
       box.appendChild(btn);
     }
     if (box.parentNode !== nav) nav.appendChild(box);
+    readHomepage();
     refreshHrefs();
   }
 

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @author       Lindblum
 // @name         YouTube Caption Translation Gloss
-// @namespace    https://www.youtube.com/
-// @version      1.2
+// @namespace    https://github.com/lindblum/userscripts
+// @version      1.3
 // @description  Shows a small-font translation gloss (in your default language) above each word of foreign-language YouTube captions
 // @match        https://www.youtube.com/*
 // @run-at       document-start
@@ -21,6 +21,10 @@ How it works
       .ytp-caption-window-container > .caption-window > .captions-text > .caption-visual-line > span.ytp-caption-segment
     Each segment's original text nodes are moved (not copied) into a hidden span.cth-orig, so the player can keep
     updating them, and a span.cth-out with one <ruby>word<rt>translation</rt></ruby> per word is shown instead.
+    Segments are processed straight from the MutationObserver callback (a microtask, before the next paint) so
+    a line never renders for a frame without its glosses.
+  - History: caption lines that leave the screen are kept and the last few are shown (dimmed, glossed) in a
+    div.cth-history above the live captions, so there's more time to read them. Cleared on seek / new video.
   - Source language: the player's current caption track (movie_player.getOption('captions', 'track')),
     falling back to the lang/tlang of the last /api/timedtext request, then to 'auto'.
   - Transcripts: /api/timedtext requests are picked up from resource timing (the player's URL carries the
@@ -28,7 +32,7 @@ How it works
     up front so gloss notes are ready before the caption appears.
   - Translations: word lists are sent newline-separated to Google Translate's gtx endpoint and cached per
     language pair in GM storage.
-  - Menu: Toggle gloss, Set gloss language
+  - Menu: Toggle gloss, Set gloss language, Set caption history lines
 */
 
 (function () {
@@ -39,9 +43,11 @@ How it works
   const BATCH_CHARS = 1500;   // max characters of words per translation request
   const CACHE_MAX = 20000;    // max cached words per language pair
   const SCAN_INTERVAL = 1000; // ms between checks for a (new) caption container
+  const HISTORY_MAX = 50;     // max remembered caption lines
 
   let enabled = GM_getValue('enabled', true);
   let targetLang = normLang(GM_getValue('targetLang', '') || navigator.language || 'en');
+  let historyLines = Math.max(0, parseInt(GM_getValue('historyLines', 3), 10) || 0);
 
   const transcripts = new Map(); // "videoId-lang" -> { videoId, lang, lines: [text] }
   let lastTrack = null;          // { videoId, lang } of the most recent timedtext request
@@ -246,6 +252,11 @@ How it works
     }
     .ytp-caption-segment rt.cth-t:empty::before { content: '\\00a0'; }
     .ytp-caption-window-container .caption-window { overflow: visible; }
+    .cth-history {
+      position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); width: max-content;
+      text-align: center; opacity: 0.7; pointer-events: none;
+    }
+    .cth-history .cth-hist-line { display: block; }
   `;
 
   function currentContext() {
@@ -331,7 +342,83 @@ How it works
   function scanCaptions() {
     const ctx = currentContext();
     for (const seg of document.querySelectorAll('.ytp-caption-segment')) processSegment(seg, ctx);
+    updateHistory(ctx);
   } //scanCaptions
+
+  //-------------------------------------------------------------------------- caption history
+
+  let history = [];      // caption lines that have left the screen, oldest first
+  let visibleLines = []; // live caption lines at the last scan
+  let historyVideo = '';
+
+  function clearHistory() {
+    history = [];
+    visibleLines = [];
+    queueScan();
+  } //clearHistory
+
+  function lineText(line) {
+    return Array.from(line.querySelectorAll('.ytp-caption-segment'), seg => {
+      const orig = seg.querySelector(':scope > .cth-orig');
+      return orig ? orig.textContent : seg.textContent;
+    }).join('').trim();
+  } //lineText
+
+  function updateHistory(ctx) {
+    const vid = currentVideoId();
+    if (vid !== historyVideo) {
+      historyVideo = vid;
+      history = [];
+      visibleLines = [];
+    }
+    const lines = Array.from(document.querySelectorAll('.ytp-caption-window-container .caption-visual-line'))
+      .filter(l => !l.closest('.cth-history')).map(lineText).filter(Boolean);
+    // A line that vanished has been read, unless it just grew (auto-generated captions add words one at a time)
+    for (const t of visibleLines) {
+      if (lines.some(l => l.startsWith(t))) continue;
+      if (history[history.length - 1] !== t) history.push(t);
+    }
+    if (history.length > HISTORY_MAX) history.splice(0, history.length - HISTORY_MAX);
+    visibleLines = lines;
+    renderHistory(ctx);
+  } //updateHistory
+
+  function renderHistory(ctx) {
+    const win = Array.from(document.querySelectorAll('.ytp-caption-window-container .caption-window'))
+      .find(w => w.querySelector('.caption-visual-line:not(.cth-hist-line)'));
+    let box = document.querySelector('.cth-history');
+    const shown = historyLines ? history.slice(-historyLines) : [];
+    if (!win || !shown.length) {
+      box?.remove();
+      return;
+    }
+    if (!box || box.parentNode !== win) {
+      box?.remove();
+      box = document.createElement('div');
+      box.className = 'cth-history';
+      win.prepend(box);
+    }
+    const container = win.closest('.ytp-caption-window-container');
+    if (container) box.style.maxWidth = Math.round(container.clientWidth * 0.9) + 'px';
+
+    // Copy the player's caption styling (font, size, background) from a live segment
+    const segStyle = win.querySelector('.ytp-caption-segment:not(.cth-hist-seg)')?.getAttribute('style') || '';
+    const sig = shown.join('
+') + '|' + segStyle;
+    if (box.dataset.sig === sig) return;
+    box.dataset.sig = sig;
+    box.replaceChildren(...shown.map(text => {
+      const line = document.createElement('div');
+      line.className = 'caption-visual-line cth-hist-line';
+      const seg = document.createElement('span');
+      seg.className = 'ytp-caption-segment cth-hist-seg';
+      seg.setAttribute('style', segStyle);
+      seg.textContent = text;
+      line.append(seg);
+      return line;
+    }));
+    for (const seg of box.querySelectorAll('.ytp-caption-segment')) processSegment(seg, ctx);
+  } //renderHistory
 
   let scanQueued = false;
   function queueScan() {
@@ -344,7 +431,8 @@ How it works
   } //queueScan
 
   const observed = new WeakSet();
-  const observer = new MutationObserver(queueScan);
+  // Scan synchronously so new lines get their glosses before they're painted (no height jump)
+  const observer = new MutationObserver(scanCaptions);
 
   function attachObservers() {
     for (const c of document.querySelectorAll('.ytp-caption-window-container')) {
@@ -352,6 +440,11 @@ How it works
       observed.add(c);
       observer.observe(c, { childList: true, subtree: true, characterData: true });
       queueScan();
+    }
+    const video = document.querySelector('#movie_player video');
+    if (video && !observed.has(video)) {
+      observed.add(video);
+      video.addEventListener('seeking', clearHistory);
     }
   } //attachObservers
 
@@ -446,6 +539,14 @@ How it works
     GM_setValue('targetLang', v.trim());
     targetLang = normLang(v.trim() || navigator.language || 'en');
     rerenderAll();
+  });
+
+  GM_registerMenuCommand('Set caption history lines…', () => {
+    const v = prompt('How many previous caption lines to keep on screen above the current ones? (0 to disable)', historyLines);
+    if (v === null) return;
+    historyLines = Math.max(0, parseInt(v, 10) || 0);
+    GM_setValue('historyLines', historyLines);
+    queueScan();
   });
 
   function init() {

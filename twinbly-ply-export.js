@@ -1,7 +1,7 @@
 // ==UserScript==
 // @author       Lindblum
 // @name         Twinbly PLY Export
-// @namespace    https://www.twinbly.com/
+// @namespace    https://github.com/lindblum/userscripts
 // @version      1.3
 // @description  Exports a Twinbly gaussian-splat scene's points (position + base color) as an ASCII .ply point cloud, cropped to a radius
 // @match        https://www.twinbly.com/v/*
